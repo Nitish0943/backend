@@ -7,25 +7,14 @@ from datetime import datetime
 import logging
 from websockets.server import serve
 from websockets.exceptions import ConnectionClosed
-from aiohttp import web
-from aiohttp.web import Response
 
 # Configure logging
-log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-logging.basicConfig(
-    level=getattr(logging, log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get host and port from environment variables (for cloud hosting)
 HOST = os.getenv('HOST', 'localhost')
 PORT = int(os.getenv('PORT', 5000))
-
-# Production settings
-MAX_CONNECTIONS = int(os.getenv('MAX_CONNECTIONS', 100))
-PING_INTERVAL = int(os.getenv('PING_INTERVAL', 20))
-PING_TIMEOUT = int(os.getenv('PING_TIMEOUT', 20))
 
 class EyeTracker:
     def __init__(self):
@@ -66,20 +55,15 @@ class EyeTracker:
     async def start_server(self):
         """Start the WebSocket server"""
         try:
-            # Add connection limits for production
             server = await serve(
                 self.handle_client, 
                 HOST, 
                 PORT,
-                ping_interval=PING_INTERVAL,
-                ping_timeout=PING_TIMEOUT,
-                max_size=2**20,  # 1MB max message size
-                compression=None  # Disable compression for better performance
+                ping_interval=20,
+                ping_timeout=20
             )
             logger.info(f"🚀 Eye tracking server started on {HOST}:{PORT}")
             logger.info(f"📡 WebSocket endpoint: ws://{HOST}:{PORT}")
-            logger.info(f"🔧 Max connections: {MAX_CONNECTIONS}")
-            logger.info(f"🔧 Ping interval: {PING_INTERVAL}s, timeout: {PING_TIMEOUT}s")
             
             # Keep the server running
             await server.wait_closed()
@@ -90,25 +74,14 @@ class EyeTracker:
     async def handle_client(self, websocket, path):
         """Handle WebSocket client connections"""
         try:
-            # Check connection limits
-            if len(self.connected_clients) >= MAX_CONNECTIONS:
-                await websocket.close(code=1013, reason="Server at capacity")
-                logger.warning(f"🚫 Connection rejected - server at capacity ({MAX_CONNECTIONS})")
-                return
-                
             self.connected_clients.add(websocket)
-            client_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
-            logger.info(f"✅ Client connected from {client_ip}. Total clients: {len(self.connected_clients)}")
+            logger.info(f"✅ Client connected. Total clients: {len(self.connected_clients)}")
             
             # Send welcome message
             await websocket.send(json.dumps({
                 "type": "connection",
                 "message": "Eye tracking connected",
-                "timestamp": datetime.now().isoformat(),
-                "server_info": {
-                    "version": "1.0.0",
-                    "max_connections": MAX_CONNECTIONS
-                }
+                "timestamp": datetime.now().isoformat()
             }))
             
             # Keep connection alive and handle messages
@@ -117,17 +90,12 @@ class EyeTracker:
                     data = json.loads(message)
                     await self.process_message(websocket, data)
                 except json.JSONDecodeError:
-                    logger.warning(f"❌ Invalid JSON received from {client_ip}")
-                    await websocket.send(json.dumps({
-                        "type": "error",
-                        "message": "Invalid JSON format",
-                        "timestamp": datetime.now().isoformat()
-                    }))
+                    logger.warning("❌ Invalid JSON received")
                 except Exception as e:
-                    logger.error(f"❌ Error processing message from {client_ip}: {e}")
+                    logger.error(f"❌ Error processing message: {e}")
                     
         except ConnectionClosed:
-            logger.info(f"🔌 Client {client_ip if 'client_ip' in locals() else 'unknown'} disconnected normally")
+            logger.info("🔌 Client disconnected normally")
         except Exception as e:
             logger.error(f"❌ Client error: {e}")
         finally:
@@ -257,57 +225,10 @@ class EyeTracker:
                 cap.release()
             logger.info("📹 Camera released")
 
-async def health_check(request):
-    """Health check endpoint for Render"""
-    try:
-        return Response(text=json.dumps({
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "service": "eye-tracking-backend",
-            "version": "1.0.0"
-        }), content_type='application/json')
-    except Exception as e:
-        return Response(text=json.dumps({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), content_type='application/json', status=500)
-
-async def create_health_server():
-    """Create HTTP server for health checks that also handles WebSocket upgrades"""
-    app = web.Application()
-    app.router.add_get('/health', health_check)
-    app.router.add_get('/', health_check)  # Root endpoint also returns health
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    site = web.TCPSite(runner, HOST, PORT)
-    await site.start()
-    
-    logger.info(f"🏥 Health check server started on {HOST}:{PORT}")
-    return runner
-
 async def main():
-    """Main function to start both WebSocket and health check servers"""
-    try:
-        # Start health check server
-        health_runner = await create_health_server()
-        
-        # Start WebSocket server
-        tracker = EyeTracker()
-        
-        # Run both servers concurrently
-        await asyncio.gather(
-            tracker.start_server(),
-            # Keep health server running
-            asyncio.create_task(asyncio.Event().wait())
-        )
-    except Exception as e:
-        logger.error(f"❌ Failed to start servers: {e}")
-        if 'health_runner' in locals():
-            await health_runner.cleanup()
-        raise
+    """Main function to start the server"""
+    tracker = EyeTracker()
+    await tracker.start_server()
 
 if __name__ == "__main__":
     try:
