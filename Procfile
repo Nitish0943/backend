@@ -1,1 +1,1 @@
-web: python eye_gaze.py 
+web: python app.py 

@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: eye-tracking-backend
+    env: python
+    plan: free  # Change to 'starter' or higher for production
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: HOST
+        value: "0.0.0.0"
+      - key: PORT
+        fromService:
+          type: web
+          name: eye-tracking-backend
+          property: port
+      - key: LOG_LEVEL
+        value: "INFO"
+      - key: MAX_CONNECTIONS
+        value: "50"  # Lower for free tier
+      - key: PYTHON_VERSION
+        value: "3.11.7"
+    healthCheckPath: /health
+    numInstances: 1
+    region: oregon  # Change to your preferred region (oregon, frankfurt, singapore)
+    scaling:
+      minInstances: 1
+      maxInstances: 1  # Free tier limitation

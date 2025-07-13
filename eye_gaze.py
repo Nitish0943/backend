@@ -7,6 +7,8 @@ from datetime import datetime
 import logging
 from websockets.server import serve
 from websockets.exceptions import ConnectionClosed
+from aiohttp import web
+from aiohttp.web import Response
 
 # Configure logging
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -255,10 +257,57 @@ class EyeTracker:
                 cap.release()
             logger.info("📹 Camera released")
 
+async def health_check(request):
+    """Health check endpoint for Render"""
+    try:
+        return Response(text=json.dumps({
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "service": "eye-tracking-backend",
+            "version": "1.0.0"
+        }), content_type='application/json')
+    except Exception as e:
+        return Response(text=json.dumps({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), content_type='application/json', status=500)
+
+async def create_health_server():
+    """Create HTTP server for health checks that also handles WebSocket upgrades"""
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    app.router.add_get('/', health_check)  # Root endpoint also returns health
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    site = web.TCPSite(runner, HOST, PORT)
+    await site.start()
+    
+    logger.info(f"🏥 Health check server started on {HOST}:{PORT}")
+    return runner
+
 async def main():
-    """Main function to start the server"""
-    tracker = EyeTracker()
-    await tracker.start_server()
+    """Main function to start both WebSocket and health check servers"""
+    try:
+        # Start health check server
+        health_runner = await create_health_server()
+        
+        # Start WebSocket server
+        tracker = EyeTracker()
+        
+        # Run both servers concurrently
+        await asyncio.gather(
+            tracker.start_server(),
+            # Keep health server running
+            asyncio.create_task(asyncio.Event().wait())
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to start servers: {e}")
+        if 'health_runner' in locals():
+            await health_runner.cleanup()
+        raise
 
 if __name__ == "__main__":
     try:
